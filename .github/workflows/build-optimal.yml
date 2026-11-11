@@ -36,6 +36,13 @@ jobs:
       - name: Build base (Image + dtbo + dtb-normal)
         run: |
           export PATH="$(pwd)/clang/bin:$PATH"
+          echo "--- clang/bin tools:"
+          ls clang/bin | head -40
+          command -v clang ld.lld || true
+          # fallback: some catalogue builds ship lld without the ld.lld alias
+          if ! command -v ld.lld >/dev/null && command -v lld >/dev/null; then
+            ln -sf "$(command -v lld)" "$(pwd)/clang/bin/ld.lld"
+          fi
           export ARCH=arm64
           export SUBARCH=ARM64
           export KBUILD_BUILD_USER="fuxilover"
