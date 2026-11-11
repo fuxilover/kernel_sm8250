@@ -56,6 +56,8 @@ jobs:
 
       - name: Build GPU-UV dtb (one RPMH corner down per level)
         run: |
+          export PATH="$(pwd)/clang/bin:$PATH"
+          export ARCH=arm64 SUBARCH=ARM64
           GPU=arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
           sed -i \
             -e 's/RPMH_REGULATOR_LEVEL_NOM_L1/RPMH_REGULATOR_LEVEL_NOM/' \
@@ -63,14 +65,16 @@ jobs:
             -e 's/RPMH_REGULATOR_LEVEL_SVS_L0/RPMH_REGULATOR_LEVEL_SVS/' \
             -e 's/TMP_UV_SVS_L1/RPMH_REGULATOR_LEVEL_SVS_L0/' \
             -e 's/RPMH_REGULATOR_LEVEL_SVS_L2/RPMH_REGULATOR_LEVEL_SVS_L1/' $GPU
-          make O=out dtb.img
+          make O=out CC=clang -j$(nproc --all) CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 dtb.img
           cp out/arch/arm64/boot/dtb.img dtb-gpu-uv
 
       - name: Build CPU+GPU-UV dtb (volt-LUT offset ${{ github.event.inputs.CPU_UV_MV }} mV)
         run: |
+          export PATH="$(pwd)/clang/bin:$PATH"
+          export ARCH=arm64 SUBARCH=ARM64
           CPU=${{ github.event.inputs.CPU_UV_MV }}
           sed -i "s/qcom,skip-enable-check;/qcom,skip-enable-check;\\n\\t\\t\\tqcom,volt-lut-offset-mv = <${CPU}>;/" arch/arm64/boot/dts/vendor/qcom/kona.dtsi
-          make O=out dtb.img
+          make O=out CC=clang -j$(nproc --all) CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1 dtb.img
           cp out/arch/arm64/boot/dtb.img dtb-cpu-uv-gpu-uv
 
       - name: Package AnyKernel3 zips
