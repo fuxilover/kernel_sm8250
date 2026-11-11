@@ -27,6 +27,12 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Strip MLGO advisor flags (neutron clang has no embedded models)
+        run: |
+          sed -i -e '/regalloc-enable-advisor/s/^/#/' \
+                 -e '/enable-ml-inliner/s/^/#/' \
+                 -e '/ml-inliner-model-selector/s/^/#/' Makefile
+
       - name: Build base (Image + dtbo + dtb-normal)
         run: |
           export PATH="$(pwd)/clang/bin:$PATH"
