@@ -23,6 +23,12 @@
 #define LUT_MAX_ENTRIES			40U
 #define CORE_COUNT_VAL(val)		(((val) & (GENMASK(18, 16))) >> 16)
 #define LUT_ROW_SIZE			32
+/*
+ * Floor for DT-driven EPSS volt-LUT undervolt (qcom,volt-lut-offset-mv).
+ * Rows already below this voltage are left untouched so we never raise
+ * a low-voltage corner and never go below a sane operating point.
+ */
+#define CPU_UV_MIN_MV			400
 #define CLK_HW_DIV			2
 #define GT_IRQ_STATUS			BIT(2)
 #define MAX_FN_SIZE			20
@@ -503,6 +509,7 @@ static int qcom_cpufreq_hw_read_lut(struct platform_device *pdev,
 	u32 vc;
 	unsigned long cpu;
 	int ret, of_len, max_index;
+	int volt_offset_mv = 0;
 	u32 *of_table = NULL;
 	char tbl_name[] = "qcom,cpufreq-table-##";
 	bool invalidate_freq;
@@ -534,6 +541,18 @@ static int qcom_cpufreq_hw_read_lut(struct platform_device *pdev,
 	base_freq = c->reg_bases[REG_FREQ_LUT_TABLE];
 	base_volt = c->reg_bases[REG_VOLT_LUT_TABLE];
 
+	/*
+	 * Optional DT-driven undervolt: shift the EPSS volt-LUT down by N mV
+	 * so the hardware applies lower voltage at every perf state.
+	 * Absent property (default) keeps the bootloader-programmed LUT.
+	 */
+	if (!of_property_read_s32(dev->of_node, "qcom,volt-lut-offset-mv",
+				  &volt_offset_mv) && volt_offset_mv > 0)
+		dev_info(dev, "Domain %d: undervolting volt LUT by %d mV\n",
+			 domain_index, volt_offset_mv);
+	else
+		volt_offset_mv = 0;
+
 	prev_cc = 0;
 
 	for (i = 0; i < lut_max_entries; i++) {
@@ -545,6 +564,25 @@ static int qcom_cpufreq_hw_read_lut(struct platform_device *pdev,
 		data = readl_relaxed(base_volt + i * lut_row_size);
 		volt = (data & GENMASK(11, 0)) * 1000;
 		vc = data & GENMASK(21, 16);
+
+		if (volt_offset_mv > 0 && volt > 0) {
+			u32 mv = volt / 1000;
+			u32 new_mv;
+
+			if (mv <= CPU_UV_MIN_MV) {
+				new_mv = mv;
+			} else {
+				new_mv = mv - volt_offset_mv;
+				if (new_mv < CPU_UV_MIN_MV)
+					new_mv = CPU_UV_MIN_MV;
+			}
+			if (new_mv != mv) {
+				data = (data & ~GENMASK(11, 0)) |
+				       (new_mv & GENMASK(11, 0));
+				writel_relaxed(data, base_volt + i * lut_row_size);
+				volt = new_mv * 1000;
+			}
+		}
 
 		if (src)
 			c->table[i].frequency = c->xo_rate * lval / 1000;

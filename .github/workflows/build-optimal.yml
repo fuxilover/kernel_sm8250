@@ -1,0 +1,90 @@
+name: FD-Optimal alioth builder
+
+on:
+  workflow_dispatch:
+    inputs:
+      CPU_UV_MV:
+        description: 'CPU volt-LUT undervolt offset (mV) for the combined dtb variant'
+        default: '25'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Dependencies
+        run: sudo apt-get update && sudo apt-get install -y flex libncurses6 zstd
+
+      - name: Download Neutron Clang
+        run: |
+          wget https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/06092026/neutron-clang-06092026.tar.zst -O clang.tar.zst
+          mkdir clang
+          unzstd -d clang.tar.zst -o clang.tar
+          tar -xf clang.tar -C clang
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build base (Image + dtbo + dtb-normal)
+        run: |
+          export PATH="$(pwd)/clang/bin:$PATH"
+          export ARCH=arm64
+          export SUBARCH=ARM64
+          export KBUILD_BUILD_USER="fuxilover"
+          export KBUILD_BUILD_HOST="optimal"
+          export KBUILD_BUILD_TIMESTAMP="$(TZ=UTC-7 date)"
+          make O=out vendor/alioth_defconfig
+          make O=out CC=clang -j$(nproc --all) CROSS_COMPILE=aarch64-linux-gnu- LLVM=1 LLVM_IAS=1
+          cp out/arch/arm64/boot/Image.gz Image.gz
+          cp out/arch/arm64/boot/dtb.img dtb-normal
+          cp out/arch/arm64/boot/dtbo.img dtbo.img
+
+      - name: Build GPU-UV dtb (one RPMH corner down per level)
+        run: |
+          GPU=arch/arm64/boot/dts/vendor/qcom/kona-v2-gpu.dtsi
+          sed -i \
+            -e 's/RPMH_REGULATOR_LEVEL_NOM_L1/RPMH_REGULATOR_LEVEL_NOM/' \
+            -e 's/RPMH_REGULATOR_LEVEL_SVS_L1/TMP_UV_SVS_L1/' \
+            -e 's/RPMH_REGULATOR_LEVEL_SVS_L0/RPMH_REGULATOR_LEVEL_SVS/' \
+            -e 's/TMP_UV_SVS_L1/RPMH_REGULATOR_LEVEL_SVS_L0/' \
+            -e 's/RPMH_REGULATOR_LEVEL_SVS_L2/RPMH_REGULATOR_LEVEL_SVS_L1/' $GPU
+          make O=out dtb.img
+          cp out/arch/arm64/boot/dtb.img dtb-gpu-uv
+
+      - name: Build CPU+GPU-UV dtb (volt-LUT offset ${{ github.event.inputs.CPU_UV_MV }} mV)
+        run: |
+          CPU=${{ github.event.inputs.CPU_UV_MV }}
+          sed -i "s/qcom,skip-enable-check;/qcom,skip-enable-check;\\n\\t\\t\\tqcom,volt-lut-offset-mv = <${CPU}>;/" arch/arm64/boot/dts/vendor/qcom/kona.dtsi
+          make O=out dtb.img
+          cp out/arch/arm64/boot/dtb.img dtb-cpu-uv-gpu-uv
+
+      - name: Package AnyKernel3 zips
+        run: |
+          git clone --depth=1 https://github.com/fuxilover/anykernel3-test.git AK3
+          for v in base gpu-uv cpu-uv-gpu-uv; do
+            cp -r AK3 AK3-$v
+            cp Image.gz AK3-$v/Image.gz
+            case $v in
+              base)            cp dtb-normal AK3-$v/dtb;;
+              gpu-uv)          cp dtb-gpu-uv AK3-$v/dtb;;
+              cpu-uv-gpu-uv)   cp dtb-cpu-uv-gpu-uv AK3-$v/dtb;;
+            esac
+            cp dtbo.img AK3-$v/dtbo.img
+            (cd AK3-$v && zip -r9 "../FD-Opt-alioth-$v.zip" . -x ".git/*" "*.git*")
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: FD-Opt-alioth
+          path: |
+            Image.gz
+            dtb-normal
+            dtb-gpu-uv
+            dtb-cpu-uv-gpu-uv
+            dtbo.img
+            FD-Opt-alioth-base.zip
+            FD-Opt-alioth-gpu-uv.zip
+            FD-Opt-alioth-cpu-uv-gpu-uv.zip
