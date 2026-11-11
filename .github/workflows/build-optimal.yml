@@ -15,13 +15,6 @@ jobs:
       - name: Install Dependencies
         run: sudo apt-get update && sudo apt-get install -y flex libncurses6 zstd
 
-      - name: Download Neutron Clang
-        run: |
-          wget https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/06092026/neutron-clang-06092026.tar.zst -O clang.tar.zst
-          mkdir clang
-          unzstd -d clang.tar.zst -o clang.tar
-          tar -xf clang.tar -C clang
-
       - name: Checkout kernel
         uses: actions/checkout@v4
         with:
@@ -32,6 +25,13 @@ jobs:
           sed -i -e '/regalloc-enable-advisor/s/^/#/' \
                  -e '/enable-ml-inliner/s/^/#/' \
                  -e '/ml-inliner-model-selector/s/^/#/' Makefile
+
+      - name: Download Neutron Clang
+        run: |
+          wget https://github.com/Neutron-Toolchains/clang-build-catalogue/releases/download/06092026/neutron-clang-06092026.tar.zst -O clang.tar.zst
+          mkdir clang
+          unzstd -d clang.tar.zst -o clang.tar
+          tar -xf clang.tar -C clang
 
       - name: Build base (Image + dtbo + dtb-normal)
         run: |
